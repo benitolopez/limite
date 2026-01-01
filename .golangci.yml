@@ -1,0 +1,22 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+
+  settings:
+    gofumpt:
+      extra-rules: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - errcheck
+    - ineffassign
+
+  settings:
+    staticcheck:
+      checks: 
+        - all
