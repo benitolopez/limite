@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"sync"
 
-	"pds.lopezb.com/internal/pds/topk"
+	"limite.lopezb.com/internal/limite/topk"
 )
 
 // respBufferPool reuses byte slices for RESP responses to reduce GC pressure.

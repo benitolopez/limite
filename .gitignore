@@ -1,8 +1,8 @@
-### PDS ###
-/pds-server
-/pds-check
+### limite ###
+/limite-server
+/limite-check
 *.aof
-*.pds
+*.limite
 output.txt
 
 ### Go ###

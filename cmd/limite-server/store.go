@@ -1,5 +1,5 @@
 // store.go implements the sharded in-memory key-value store and its binary
-// persistence format. This file is one half of the PDS Persistence Layer; the
+// persistence format. This file is one half of the Limite Persistence Layer; the
 // other half (persistence.go) orchestrates the interaction between this store
 // and the append-only log.
 //
@@ -23,11 +23,11 @@
 // chosen for its speed and reasonable distribution properties; cryptographic
 // strength is not needed here.
 //
-// The Binary Format (PDS1)
+// The Binary Format (LIM1)
 // ========================
 //
 // Snapshots use a custom binary format optimized for raw loading speed. Unlike
-// generic formats (JSON, Gob), PDS1 avoids reflection and can restore millions
+// generic formats (JSON, Gob), LIM1 avoids reflection and can restore millions
 // of keys per second by inserting directly into the destination shard.
 //
 // File Structure:
@@ -37,7 +37,7 @@
 //	+--------+-----------+-----------+---------+     +-----+-----------+
 //	 4 bytes   variable    variable    variable       1 B    8 bytes
 //
-// Header: A 4-byte magic string "PDS1" for format identification.
+// Header: A 4-byte magic string "LIM1" for format identification.
 //
 // Shard Blocks: Each non-empty shard is written as a block:
 //
@@ -92,7 +92,7 @@ import (
 	"sync"
 )
 
-const persistenceMagic = "PDS1"
+const persistenceMagic = "LIM1"
 
 // shardCount determines how many independent maps we maintain.
 // 256 is a sweet spot: enough to reduce contention significantly,

@@ -2,7 +2,7 @@
 // interaction between the in-memory Store and the on-disk journal. This file is
 // responsible for loading data at startup and logging writes during operation.
 //
-// The PDS server uses a Hybrid Persistence Model inspired by Redis 4.0+. This
+// The Limite server uses a Hybrid Persistence Model inspired by Redis 4.0+. This
 // model combines the best properties of two approaches:
 //
 //   - Binary Snapshots: Fast to load, compact on disk, but represent a
@@ -15,7 +15,7 @@
 //
 //	+-----------------------+---------------------------+
 //	| Binary Preamble       | Text Tail                 |
-//	| (PDS1 Snapshot)       | (RESP Commands)           |
+//	| (LIM1 Snapshot)       | (RESP Commands)           |
 //	+-----------------------+---------------------------+
 //
 // On startup, the loader reads the binary preamble to restore the bulk of the
@@ -124,7 +124,7 @@ func (app *application) loadAOF() error {
 	magic, _ := reader.Peek(4)
 
 	// 2. Binary Preamble Loading
-	if string(magic) == "PDS1" {
+	if string(magic) == "LIM1" {
 		app.logger.Info("loading hybrid AOF preamble...")
 		// This consumes the binary section and stops exactly after the checksum.
 		if err := app.store.LoadSnapshotFromReader(reader); err != nil {
@@ -160,7 +160,7 @@ func (app *application) loadAOF() error {
 					app.needsCompaction = true // Signal main.go to compact immediately after AOF opens
 					return nil
 				}
-				return errors.New("AOF truncated (run with -aof-load-truncated=true to auto-recover, or use pds-check to inspect)")
+				return errors.New("AOF truncated (run with -aof-load-truncated=true to auto-recover, or use limite-check to inspect)")
 			}
 			return err
 		}

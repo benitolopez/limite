@@ -163,7 +163,7 @@ func TestSnapshotCorruption(t *testing.T) {
 	store := NewStore()
 	store.Set("key1", []byte("data"))
 
-	filename := "test_corrupt.pds"
+	filename := "test_corrupt.limite"
 	defer func() { _ = os.Remove(filename) }()
 
 	// 1. Save valid snapshot

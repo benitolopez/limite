@@ -31,7 +31,7 @@ import (
 	"io"
 	"strconv"
 
-	"pds.lopezb.com/internal/pds/cms"
+	"limite.lopezb.com/internal/limite/cms"
 )
 
 // handleCMSInit handles the CMS.INIT command.

@@ -1,7 +1,7 @@
-PDS - Probabilistic Data Structures Server
+Limite - Probabilistic Data Structures Server
 ===
 
-PDS is a standalone server, written in Go, that provides probabilistic data structures as a network service. Think of it as Redis, but specialized for approximate algorithms that trade perfect accuracy for dramatic memory savings. It runs as a single binary, accepting commands over a raw TCP connection using the Redis RESP protocol.
+Limite is a standalone server, written in Go, that provides probabilistic data structures as a network service. Think of it as Redis, but specialized for approximate algorithms that trade perfect accuracy for dramatic memory savings. It runs as a single binary, accepting commands over a raw TCP connection using the Redis RESP protocol.
 
 What are probabilistic data structures?
 ---
@@ -19,7 +19,7 @@ These structures excel at:
 
 They're the workhorses behind real-time analytics, spam detection, network monitoring, and any system that processes more data than can fit in memory.
 
-PDS implements the following probabilistic data structures:
+Limite implements the following probabilistic data structures:
 
 **HyperLogLog** for cardinality estimation:
 - Uses 16,384 registers (p=14) for approximately 0.81% standard error
@@ -34,7 +34,7 @@ PDS implements the following probabilistic data structures:
 
 **Count-Min Sketch** for frequency estimation:
 - Conservative Update technique reduces over-counting by 50%+ on typical workloads
-- Two creation modes: specify dimensions directly, or let PDS calculate optimal dimensions from error bounds
+- Two creation modes: specify dimensions directly, or let Limite calculate optimal dimensions from error bounds
 - Typical configuration (width=1000, depth=5) uses ~20KB and achieves ~0.27% error relative to total count
 
 **Top-K** for heavy hitter detection:
@@ -43,28 +43,28 @@ PDS implements the following probabilistic data structures:
 - Pre-computed decay tables eliminate expensive math operations on the hot path
 - Configurable K, width, depth, and decay factor
 
-Additionally, PDS provides basic **String** operations (SET, GET, INCR/DECR) for convenience when you need to store auxiliary data alongside your probabilistic structures.
+Additionally, Limite provides basic **String** operations (SET, GET, INCR/DECR) for convenience when you need to store auxiliary data alongside your probabilistic structures.
 
 Protocol and compatibility
 ---
 
-PDS speaks RESP (Redis Serialization Protocol), the same protocol used by Redis. This means:
+Limite speaks RESP (Redis Serialization Protocol), the same protocol used by Redis. This means:
 
-- You can use `redis-cli` to interact with PDS
+- You can use `redis-cli` to interact with Limite
 - You can use `redis-benchmark` for performance testing
-- Existing Redis client libraries work with PDS (just point them at port 6479)
+- Existing Redis client libraries work with Limite (just point them at port 6479)
 - Commands support both array format (from client libraries) and inline format (for manual testing)
 
-The choice of RESP wasn't arbitrary. RESP is binary-safe, simple to implement, and has extensive tooling. By speaking RESP, PDS becomes immediately accessible from any programming language with a Redis client.
+The choice of RESP wasn't arbitrary. RESP is binary-safe, simple to implement, and has extensive tooling. By speaking RESP, Limite becomes immediately accessible from any programming language with a Redis client.
 
 Building and running
 ---
 
 ```
-$ git clone https://github.com/benitolopez/pds.git
-$ cd pds
-$ go build -o pds-server ./cmd/pds-server
-$ ./pds-server
+$ git clone https://github.com/benitolopez/limite.git
+$ cd limite
+$ go build -o limite-server ./cmd/limite-server
+$ ./limite-server
 ```
 
 The server starts on port 6479 by default. You can now connect with redis-cli:
@@ -477,24 +477,24 @@ Example:
 Persistence
 ---
 
-PDS uses a hybrid persistence model combining a binary snapshot with an append-only file (AOF) for durability.
+Limite uses a hybrid persistence model combining a binary snapshot with an append-only file (AOF) for durability.
 
-**Binary snapshot** (PDS1 format): A compact point-in-time image of all data structures. Each structure is serialized with a magic header for type identification. The snapshot includes a CRC64 checksum for integrity verification.
+**Binary snapshot** (LIM1 format): A compact point-in-time image of all data structures. Each structure is serialized with a magic header for type identification. The snapshot includes a CRC64 checksum for integrity verification.
 
 **Append-only file**: After the snapshot, all write commands are appended as RESP text. This provides durability between snapshots—if the server crashes, it replays these commands on startup.
 
-**Write durability**: The AOF is fsynced to disk every second. This means at most one second of writes can be lost in a crash. If you need stronger guarantees, PDS isn't the right tool—probabilistic data structures are inherently approximate, so losing a second of data rarely matters.
+**Write durability**: The AOF is fsynced to disk every second. This means at most one second of writes can be lost in a crash. If you need stronger guarantees, Limite isn't the right tool—probabilistic data structures are inherently approximate, so losing a second of data rarely matters.
 
-**Automatic compaction**: When the AOF grows beyond a threshold (default: doubles in size from the base), PDS rewrites it as a fresh snapshot. This keeps disk usage bounded and startup time fast.
+**Automatic compaction**: When the AOF grows beyond a threshold (default: doubles in size from the base), Limite rewrites it as a fresh snapshot. This keeps disk usage bounded and startup time fast.
 
 **Manual compaction**: Use the `COMPACT` command to trigger compaction immediately. This is useful after bulk deletes.
 
-**Graceful shutdown**: On SIGINT/SIGTERM, PDS compacts the AOF before exiting, ensuring the fastest possible startup next time.
+**Graceful shutdown**: On SIGINT/SIGTERM, Limite compacts the AOF before exiting, ensuring the fastest possible startup next time.
 
 Concurrency
 ---
 
-PDS uses a sharded store with 256 independent shards, each with its own lock. This allows high concurrency—writes to different keys proceed in parallel without contention.
+Limite uses a sharded store with 256 independent shards, each with its own lock. This allows high concurrency—writes to different keys proceed in parallel without contention.
 
 Within each shard:
 - Read operations (EXISTS, QUERY, COUNT) acquire a shared lock
@@ -506,11 +506,11 @@ Connection handling uses a semaphore to limit concurrent connections (default 10
 Diagnostic tool
 ---
 
-PDS includes `pds-check`, a utility for inspecting and validating journal files:
+Limite includes `limite-check`, a utility for inspecting and validating journal files:
 
 ```
-$ go build -o pds-check ./cmd/pds-check
-$ ./pds-check -file journal.aof
+$ go build -o limite-check ./cmd/limite-check
+$ ./limite-check -file journal.aof
 ```
 
 The tool validates the binary snapshot structure, verifies the CRC64 checksum, and reports any corruption. With `-v`, it shows per-shard statistics. With `-dump`, it displays the contents of each key.
@@ -540,18 +540,18 @@ Probabilistic data structures are not a silver bullet:
 - **Over-estimation bias**: Count-Min Sketch and Bloom filters can say "yes" when the answer is "no" (false positives), but never the reverse.
 - **Memory vs accuracy tradeoff**: More memory = more accuracy, but you can't eliminate error entirely.
 
-PDS is designed for use cases where approximate answers are acceptable and memory/performance constraints make exact answers impractical.
+Limite is designed for use cases where approximate answers are acceptable and memory/performance constraints make exact answers impractical.
 
 Acknowledgments
 ---
 
-PDS owes a significant debt to Redis and its creator, Salvatore Sanfilippo (antirez). The RESP protocol, command naming conventions, and overall design philosophy are directly inspired by Redis. The code commenting style follows antirez's philosophy on [writing comments to lower cognitive load](https://antirez.com/news/124)—explaining the "why" behind decisions, not just the "what." 
+Limite owes a significant debt to Redis and its creator, Salvatore Sanfilippo (antirez). The RESP protocol, command naming conventions, and overall design philosophy are directly inspired by Redis. The code commenting style follows antirez's philosophy on [writing comments to lower cognitive load](https://antirez.com/news/124)—explaining the "why" behind decisions, not just the "what." 
 
 License
 ---
 
-PDS is open source software. See the LICENSE file for details.
+Limite is open source software. See the LICENSE file for details.
 
 ---
 
-*PDS is not affiliated with Redis Ltd. Redis is a trademark of Redis Ltd.*
+*Limite is not affiliated with Redis Ltd. Redis is a trademark of Redis Ltd.*

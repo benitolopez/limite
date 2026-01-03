@@ -1,4 +1,4 @@
-// main.go is the entry point for the PDS server. It wires together the storage
+// main.go is the entry point for the Limite server. It wires together the storage
 // layer, persistence layer, and network server, and manages the operational
 // lifecycle including background maintenance tasks.
 //
@@ -64,7 +64,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"pds.lopezb.com/internal/pds/hyperloglog"
+	"limite.lopezb.com/internal/limite/hyperloglog"
 )
 
 type config struct {

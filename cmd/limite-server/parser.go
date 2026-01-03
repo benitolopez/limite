@@ -1,4 +1,4 @@
-// PDS Protocol Implementation (RESP)
+// Limite Protocol Implementation (RESP)
 //
 // Why RESP?
 // We utilize the REdis Serialization Protocol (RESP) as our server's transport
@@ -7,7 +7,7 @@
 // Ecosystem Compatibility: By speaking RESP, this server immediately works
 // with existing, battle-tested tools like 'redis-cli' and 'redis-benchmark'.
 // Developers can use standard Redis client libraries in Python, Go, Java,
-// etc., without needing a custom PDS driver.
+// etc., without needing a custom Limite driver.
 //
 // Binary Safety & Simplicity: RESP is prefix-oriented. Every chunk of data
 // is prefixed with its length (e.g., "$5\r\nhello"). This allows us to
@@ -211,7 +211,7 @@ func (p *Parser) Buffered() int {
 // Format: $<length>\r\n<data>\r\n
 //
 // Also handles null bulk strings ($-1) which are valid RESP but return
-// an empty string since PDS commands don't use null arguments.
+// an empty string since Limite commands don't use null arguments.
 func (p *Parser) parseBulkString() (string, error) {
 	line, err := p.readLine()
 	if err != nil {

@@ -14,8 +14,8 @@ import (
  * for identifying performance regressions and understanding the cost of
  * individual operations.
  *
- * Run with: go test -bench=. -benchmem ./internal/pds/hyperloglog/
- * Profile with: go test -bench=BenchmarkHLL -cpuprofile=cpu.prof ./internal/pds/hyperloglog/
+ * Run with: go test -bench=. -benchmem ./internal/limite/hyperloglog/
+ * Profile with: go test -bench=BenchmarkHLL -cpuprofile=cpu.prof ./internal/limite/hyperloglog/
  */
 
 /*

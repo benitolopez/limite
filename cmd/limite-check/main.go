@@ -1,4 +1,4 @@
-// pds-check is a diagnostic tool for inspecting and validating PDS snapshot
+// limite-check is a diagnostic tool for inspecting and validating Limite snapshot
 // files. It performs a streaming verification of the binary preamble, checking
 // structural integrity and the CRC64 checksum without loading data into memory.
 //
@@ -15,15 +15,15 @@
 //
 // Basic validation (just checks structure and checksum):
 //
-//	pds-check -file journal.aof
+//	limite-check -file journal.aof
 //
 // Verbose mode (lists all keys with their types):
 //
-//	pds-check -file journal.aof -v
+//	limite-check -file journal.aof -v
 //
 // Dump mode (shows raw byte values, useful for debugging):
 //
-//	pds-check -file journal.aof -dump
+//	limite-check -file journal.aof -dump
 //
 // Exit Codes
 // ==========
@@ -52,7 +52,7 @@ import (
 )
 
 const (
-	persistenceMagic = "PDS1"
+	persistenceMagic = "LIM1"
 	OpCodeShardData  = 0xFE
 	OpCodeEOF        = 0xFF
 )
@@ -96,7 +96,7 @@ func main() {
 	}
 	defer func() { _ = f.Close() }()
 
-	fmt.Printf("[offset 0] Checking PDS file %s\n", *filePath)
+	fmt.Printf("[offset 0] Checking Limite file %s\n", *filePath)
 
 	// Pipeline: File -> CountReader -> Bufio
 	// We verify the hash of the BINARY section manually.
@@ -258,7 +258,7 @@ const cmsMagic = 0x31534D43
 const topkMagic = 0x4B504F54
 
 // identifyType inspects the raw bytes of a value to determine its data type.
-// PDS data structures embed type markers (magic bytes) at the start of their
+// Limite data structures embed type markers (magic bytes) at the start of their
 // serialized form, allowing us to identify them without additional metadata.
 //
 // Currently recognized types:
