@@ -41,16 +41,17 @@
 //
 // Shard Blocks: Each non-empty shard is written as a block:
 //
-//	+--------+----------+-------+-------+-------+-------+-------+-------+
-//	| OpCode | Shard ID | Count | KLen  | Key   | VLen  | Value | ...   |
-//	+--------+----------+-------+-------+-------+-------+-------+-------+
-//	  1 byte   1 byte    4 bytes 4 bytes  var    4 bytes  var
+//	+--------+----------+-------+-------+-------+--------+-------+-------+-------+
+//	| OpCode | Shard ID | Count | KLen  | Key   | Expiry | VLen  | Value | ...   |
+//	+--------+----------+-------+-------+-------+--------+-------+-------+-------+
+//	  1 byte   1 byte    4 bytes 4 bytes  var    8 bytes  4 bytes  var
 //
 //	OpCode:   0xFE indicates a shard block follows.
 //	Shard ID: The index (0-255) for direct array placement on load.
 //	Count:    Number of key-value pairs in this block.
 //	KLen/VLen: Little-endian uint32 length prefixes.
 //	Key/Value: Raw bytes.
+//	Expiry:   Unix milliseconds timestamp (0 = no expiry).
 //
 // EOF Marker: A single byte 0xFF signals the end of binary data. This is
 // critical for Hybrid AOF files where text commands follow the binary section.
@@ -63,7 +64,7 @@
 // ===================
 //
 // Normally, inserting a key requires hashing it to find the correct shard.
-// However, since PDS1 explicitly stores the shard ID with each block, the
+// However, since LIM1 explicitly stores the shard ID with each block, the
 // loader can bypass hashing entirely and insert directly into the destination
 // shard. This "zero-rehash" optimization significantly speeds up startup times
 // for large datasets.
@@ -90,6 +91,7 @@ import (
 	"hash/fnv"
 	"io"
 	"sync"
+	"time"
 )
 
 const persistenceMagic = "LIM1"
@@ -110,8 +112,9 @@ const (
 // Shard represents a single slice of the data store.
 // It has its own lock, meaning locking this shard does NOT block others.
 type Shard struct {
-	mu   sync.RWMutex
-	data map[string][]byte
+	mu      sync.RWMutex
+	data    map[string][]byte
+	expires map[string]int64 // key -> Unix milliseconds expiration time (0 = no expiry)
 }
 
 // Store holds the array of shards.
@@ -125,7 +128,8 @@ func NewStore() *Store {
 	s := &Store{}
 	for i := 0; i < shardCount; i++ {
 		s.shards[i] = &Shard{
-			data: make(map[string][]byte),
+			data:    make(map[string][]byte),
+			expires: make(map[string]int64),
 		}
 	}
 
@@ -145,48 +149,91 @@ func (s *Store) getShard(key string) *Shard {
 	return s.shards[s.getShardIndex(key)]
 }
 
+// isExpired checks if a key has expired. Safe to call with RLock held.
+func (sh *Shard) isExpired(key string, now int64) bool {
+	exp, ok := sh.expires[key]
+	return ok && exp > 0 && exp <= now
+}
+
+// deleteIfExpired checks if a key has expired and deletes it if so.
+// Must be called with exclusive (write) lock held.
+// Returns true if the key was expired and deleted.
+func (sh *Shard) deleteIfExpired(key string, now int64) bool {
+	if sh.isExpired(key, now) {
+		delete(sh.data, key)
+		delete(sh.expires, key)
+		return true
+	}
+	return false
+}
+
 // Set adds a key-value pair to the correct shard.
+// Setting a key clears any existing expiration.
 func (s *Store) Set(key string, value []byte) {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	shard.data[key] = value
+	delete(shard.expires, key) // Clear any existing expiry
 }
 
 // Get retrieves a value from the correct shard.
+// Returns nil, false if the key doesn't exist or has expired.
 func (s *Store) Get(key string) ([]byte, bool) {
 	shard := s.getShard(key)
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
+
+	// Check if expired (lazy expiration check)
+	if shard.isExpired(key, time.Now().UnixMilli()) {
+		return nil, false
+	}
+
 	val, ok := shard.data[key]
 	return val, ok
 }
 
 // Delete removes a key from the correct shard.
+// Returns true if the key existed and was deleted.
 func (s *Store) Delete(key string) bool {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
+	// Clean up expired key first (so we don't report it as deleted)
+	now := time.Now().UnixMilli()
+	if shard.isExpired(key, now) {
+		delete(shard.data, key)
+		delete(shard.expires, key)
+		return false // Key was already logically deleted
+	}
+
 	_, ok := shard.data[key]
 	if ok {
 		delete(shard.data, key)
+		delete(shard.expires, key)
 	}
 	return ok
 }
 
 // View executes a read-only callback while holding the shard's read lock.
-// The callback receives the raw bytes (or nil if key doesn't exist).
+// The callback receives the raw bytes (or nil if key doesn't exist or expired).
 // This enables zero-copy reads for performance-critical paths.
 func (s *Store) View(key string, fn func(data []byte) error) error {
 	shard := s.getShard(key)
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
 
+	// Check if expired (lazy expiration check)
+	if shard.isExpired(key, time.Now().UnixMilli()) {
+		return fn(nil)
+	}
+
 	return fn(shard.data[key]) // nil if not exists
 }
 
 // Mutate atomically reads, modifies, and updates a value using a callback.
+// If the key has expired, the callback receives nil (as if key doesn't exist).
 func (s *Store) Mutate(key string, fn func([]byte) ([]byte, bool)) {
 	//
 	// DESIGN
@@ -210,16 +257,171 @@ func (s *Store) Mutate(key string, fn func([]byte) ([]byte, bool)) {
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
+	// Delete expired key (lazy cleanup with write lock)
+	shard.deleteIfExpired(key, time.Now().UnixMilli())
+
 	currentValue := shard.data[key]
 	newValue, changed := fn(currentValue)
 
 	if changed {
 		shard.data[key] = newValue
+		delete(shard.expires, key) // New value clears expiry
 	}
 }
 
+// SetExpiry sets the expiration time for a key.
+// Returns false if the key does not exist.
+// Pass 0 to remove expiration (like PERSIST).
+func (s *Store) SetExpiry(key string, timestampMs int64) bool {
+	shard := s.getShard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	// Check if key exists (and clean up if expired)
+	shard.deleteIfExpired(key, time.Now().UnixMilli())
+
+	if _, exists := shard.data[key]; !exists {
+		return false
+	}
+
+	if timestampMs <= 0 {
+		delete(shard.expires, key) // Remove expiry (PERSIST)
+	} else {
+		shard.expires[key] = timestampMs
+	}
+	return true
+}
+
+// GetExpiry returns the expiration time and existence status for a key.
+// Returns:
+//   - (expiry, true) if key exists with expiry
+//   - (-1, true) if key exists but has no expiry
+//   - (0, false) if key doesn't exist
+func (s *Store) GetExpiry(key string) (int64, bool) {
+	shard := s.getShard(key)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+
+	// Check if expired
+	if shard.isExpired(key, time.Now().UnixMilli()) {
+		return 0, false
+	}
+
+	// Check if key exists
+	if _, exists := shard.data[key]; !exists {
+		return 0, false
+	}
+
+	// Return expiry or -1 if no expiry set
+	if exp, hasExpiry := shard.expires[key]; hasExpiry {
+		return exp, true
+	}
+	return -1, true
+}
+
+// Exists checks if a key exists and is not expired.
+func (s *Store) Exists(key string) bool {
+	shard := s.getShard(key)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+
+	if shard.isExpired(key, time.Now().UnixMilli()) {
+		return false
+	}
+
+	_, exists := shard.data[key]
+	return exists
+}
+
+// Active expiration constants (Redis-style adaptive algorithm)
+const (
+	expiryKeysPerLoop     = 20 // Sample size per shard
+	expiryAcceptableStale = 10 // Continue if >10% of sampled keys are expired
+	expiryMaxIterations   = 16 // Check time limit every N iterations
+	expiryTimeLimitMs     = 25 // Max milliseconds per cycle
+)
+
+// DeleteExpiredKeys performs active expiration using Redis-style adaptive sampling.
+// It samples keys from each shard and removes expired ones, repeating if the
+// stale percentage is high. Returns the number of keys deleted.
+func (s *Store) DeleteExpiredKeys() int {
+	//
+	// DESIGN
+	// ------
+	//
+	// This implements Redis's active expiration algorithm from expire.c. The naive
+	// approach would scan all keys looking for expired ones, but that's O(n) and
+	// would block the server. Instead, we use probabilistic sampling:
+	//
+	// For each shard:
+	//   1. Sample up to 20 random keys from the expires map
+	//   2. Delete any that have expired
+	//   3. If >10% of sampled keys were expired, repeat (the shard is "hot")
+	//   4. If <=10% expired, move to the next shard (this one is clean enough)
+	//
+	// Go's map iteration order is randomized, giving us free random sampling.
+	// This adaptive approach focuses CPU time on shards with many expired keys
+	// while quickly skipping clean shards.
+	//
+	// We also enforce a 25ms time budget per cycle. At 100ms intervals (10 Hz),
+	// this caps active expiration at 25% of one CPU core. The time check happens
+	// every 16 iterations to avoid the overhead of calling time.Now() too often.
+	//
+	start := time.Now()
+	deleted := 0
+	now := time.Now().UnixMilli()
+
+	for _, shard := range s.shards {
+		iteration := 0
+		for {
+			iteration++
+			sampled, expired := s.sampleAndExpire(shard, now)
+			deleted += expired
+
+			// Stop if no keys to sample or stale percentage is acceptable
+			if sampled == 0 || (expired*100/sampled) <= expiryAcceptableStale {
+				break
+			}
+
+			// Check time limit every N iterations to bound CPU usage
+			if iteration%expiryMaxIterations == 0 {
+				if time.Since(start).Milliseconds() > expiryTimeLimitMs {
+					return deleted
+				}
+			}
+		}
+	}
+	return deleted
+}
+
+// sampleAndExpire samples up to expiryKeysPerLoop keys from a shard's expires map
+// and deletes any that have expired. Returns (sampled, expired) counts.
+func (s *Store) sampleAndExpire(shard *Shard, now int64) (int, int) {
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	sampled := 0
+	expired := 0
+
+	// Go map iteration is random, which provides natural sampling
+	for key, exp := range shard.expires {
+		if sampled >= expiryKeysPerLoop {
+			break
+		}
+		sampled++
+
+		if exp > 0 && exp <= now {
+			delete(shard.data, key)
+			delete(shard.expires, key)
+			expired++
+		}
+	}
+
+	return sampled, expired
+}
+
 // SaveSnapshotToWriter serializes the entire in-memory state to an io.Writer
-// in the PDS1 binary format. This is the core persistence primitive used by
+// in the LIM1 binary format. This is the core persistence primitive used by
 // both standalone snapshots and the Hybrid AOF compaction process.
 //
 // The caller receives no indication of progress; for large datasets, consider
@@ -263,6 +465,7 @@ func (s *Store) SaveSnapshotToWriter(w io.Writer) error {
 	// We reuse these buffers across shards to reduce GC pressure.
 	shardBuf := new(bytes.Buffer)
 	lenBuf := make([]byte, 4)
+	expiryBuf := make([]byte, 8)
 
 	for i := 0; i < shardCount; i++ {
 		shard := s.shards[i]
@@ -289,6 +492,10 @@ func (s *Store) SaveSnapshotToWriter(w io.Writer) error {
 			binary.LittleEndian.PutUint32(lenBuf, uint32(len(k)))
 			shardBuf.Write(lenBuf)
 			shardBuf.WriteString(k)
+			// Expiry (0 if no expiry)
+			expiry := shard.expires[k] // 0 if not in map
+			binary.LittleEndian.PutUint64(expiryBuf, uint64(expiry))
+			shardBuf.Write(expiryBuf)
 			// Value
 			binary.LittleEndian.PutUint32(lenBuf, uint32(len(v)))
 			shardBuf.Write(lenBuf)
@@ -324,7 +531,7 @@ func (s *Store) SaveSnapshotToWriter(w io.Writer) error {
 }
 
 // LoadSnapshotFromReader restores the in-memory state from a buffered reader
-// containing PDS1 binary data. This method is designed specifically for Hybrid
+// containing LIM1 binary data. This method is designed specifically for Hybrid
 // AOF loading: it consumes exactly the binary preamble (header + shard blocks +
 // EOF marker + checksum) and stops, leaving the reader positioned at the first
 // byte of any subsequent text data.
@@ -338,7 +545,7 @@ func (s *Store) LoadSnapshotFromReader(r *bufio.Reader) error {
 	//
 	// This loader implements the "Zero-Rehash" optimization. Normally, inserting
 	// a key requires computing hash(key) % 256 to find the destination shard.
-	// However, the PDS1 format explicitly stores the shard ID with each block.
+	// However, the LIM1 format explicitly stores the shard ID with each block.
 	// We trust this ID and insert directly into s.shards[shardID], bypassing the
 	// hash function entirely.
 	//
@@ -364,7 +571,9 @@ func (s *Store) LoadSnapshotFromReader(r *bufio.Reader) error {
 	hasher.Write(header)
 
 	lenBuf := make([]byte, 4)
+	expiryBuf := make([]byte, 8)
 	keyScratchBuf := make([]byte, 256) // Reuse buffer to reduce allocs
+	now := time.Now().UnixMilli()
 
 	for {
 		opcodeByte, err := r.ReadByte()
@@ -419,6 +628,13 @@ func (s *Store) LoadSnapshotFromReader(r *bufio.Reader) error {
 			hasher.Write(keySlice)
 			key := string(keySlice)
 
+			// Expiry (8 bytes)
+			if _, err := io.ReadFull(r, expiryBuf); err != nil {
+				return err
+			}
+			hasher.Write(expiryBuf)
+			expiry := int64(binary.LittleEndian.Uint64(expiryBuf))
+
 			// Value Length
 			if _, err := io.ReadFull(r, lenBuf); err != nil {
 				return err
@@ -433,8 +649,16 @@ func (s *Store) LoadSnapshotFromReader(r *bufio.Reader) error {
 			}
 			hasher.Write(valBuf)
 
+			// Skip expired keys (don't insert into store)
+			if expiry > 0 && expiry <= now {
+				continue
+			}
+
 			// Direct Insertion (Zero-Rehash)
 			shard.data[key] = valBuf
+			if expiry > 0 {
+				shard.expires[key] = expiry
+			}
 		}
 	}
 

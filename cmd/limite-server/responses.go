@@ -67,6 +67,10 @@ func (app *application) writeBulkStringResponse(w io.Writer, s string) error {
 }
 
 func (app *application) writeIntegerResponse(w io.Writer, i int) error {
+	return app.writeIntegerResponse64(w, int64(i))
+}
+
+func (app *application) writeIntegerResponse64(w io.Writer, i int64) error {
 	// Fast path for 0 and 1, which cover ~99% of HLL.ADD responses.
 	// HLL.ADD returns 1 if any register changed, 0 otherwise.
 	// Using pre-allocated buffers eliminates all allocations for these cases.
@@ -83,7 +87,7 @@ func (app *application) writeIntegerResponse(w io.Writer, i int) error {
 	// Format: :integer\r\n
 	buf := make([]byte, 0, 24)
 	buf = append(buf, ':')
-	buf = strconv.AppendInt(buf, int64(i), 10)
+	buf = strconv.AppendInt(buf, i, 10)
 	buf = append(buf, '\r', '\n')
 	_, err := w.Write(buf)
 	return err
