@@ -146,6 +146,26 @@ Returns server metrics including connection count and commands processed.
 
 Manually triggers AOF compaction. Returns immediately; compaction runs in the background.
 
+**MEMORY**
+
+    MEMORY USAGE key
+
+Returns the approximate number of bytes used by a key and its value. This includes the raw data size plus estimated overhead from Go's internal data structures (~72 bytes per key for map entry bookkeeping).
+
+Returns `nil` if the key doesn't exist.
+
+Example:
+```
+127.0.0.1:6479> SET mykey "hello world"
+OK
+127.0.0.1:6479> MEMORY USAGE mykey
+(integer) 91
+127.0.0.1:6479> HLL.ADD visitors user:1 user:2 user:3
+(integer) 1
+127.0.0.1:6479> MEMORY USAGE visitors
+(integer) 16479
+```
+
 ---
 
 ### String commands
