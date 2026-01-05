@@ -8,6 +8,7 @@ func (app *application) commands() *Router {
 	// Generic Commands
 	router.Handle("PING", app.handlePing)
 	router.Handle("DEL", app.handleDel)
+	router.Handle("MEMORY", app.handleMemory)
 
 	// String Commands
 	router.Handle("SET", app.handleSet)
