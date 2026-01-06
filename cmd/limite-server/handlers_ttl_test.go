@@ -265,6 +265,46 @@ func TestSetClearsExpiry(t *testing.T) {
 	}
 }
 
+// TestIncrPreservesExpiry tests that INCR does NOT clear existing TTL.
+func TestIncrPreservesExpiry(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a numeric key with expiry
+	app.handleSet(&buf, []string{"counter", "100"})
+	buf.Reset()
+	app.handleExpire(&buf, []string{"counter", "5000"})
+	buf.Reset()
+
+	// Verify it has TTL
+	app.handleTTL(&buf, []string{"counter"})
+	if buf.String() == ":-1\r\n" {
+		t.Errorf("Key should have TTL after EXPIRE")
+	}
+	buf.Reset()
+
+	// INCR the key (should preserve TTL)
+	app.handleIncr(&buf, []string{"counter"})
+	if buf.String() != ":101\r\n" {
+		t.Errorf("INCR response: got %q, want %q", buf.String(), ":101\r\n")
+	}
+	buf.Reset()
+
+	// Verify TTL is still set (not -1)
+	app.handleTTL(&buf, []string{"counter"})
+	resp := buf.String()
+	if resp == ":-1\r\n" {
+		t.Errorf("TTL after INCR should still be set, got -1 (no expiry)")
+	}
+	// TTL should be around 5000ms (allow some margin)
+	if len(resp) >= 3 && resp[0] == ':' {
+		ttl, err := strconv.ParseInt(resp[1:len(resp)-2], 10, 64)
+		if err == nil && (ttl < 4800 || ttl > 5100) {
+			t.Errorf("TTL after INCR: got %d, want ~5000", ttl)
+		}
+	}
+}
+
 // TestLazyExpiration tests that expired keys are not returned by GET.
 func TestLazyExpiration(t *testing.T) {
 	app := newTestApp(t)

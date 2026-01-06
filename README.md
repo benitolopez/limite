@@ -251,7 +251,7 @@ OK
 (integer) -1
 ```
 
-Note: Setting a key with `SET` clears any existing expiration. If you need to update a value while preserving its TTL, you must re-apply the expiration after the SET.
+Note: `SET` clears any existing expiration. However, `INCR`/`DECR` preserve the TTL—only commands that replace the value entirely clear expiration.
 
 ---
 

@@ -265,7 +265,8 @@ func (s *Store) Mutate(key string, fn func([]byte) ([]byte, bool)) {
 
 	if changed {
 		shard.data[key] = newValue
-		delete(shard.expires, key) // New value clears expiry
+		// Mutate preserves expiry. Commands that replace the value
+		// entirely (SET) use Store.Set() which clears expiry.
 	}
 }
 
