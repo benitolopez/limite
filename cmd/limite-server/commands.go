@@ -10,6 +10,16 @@ func (app *application) commands() *Router {
 	router.Handle("DEL", app.handleDel)
 	router.Handle("MEMORY", app.handleMemory)
 
+	// TTL Commands
+	router.Handle("EXPIRE", app.handleExpire)
+	router.Handle("EXPIRENX", app.handleExpireNX)
+	router.Handle("EXPIREXX", app.handleExpireXX)
+	router.Handle("EXPIREAT", app.handleExpireAt)
+	router.Handle("EXPIREATNX", app.handleExpireAtNX)
+	router.Handle("EXPIREATXX", app.handleExpireAtXX)
+	router.Handle("TTL", app.handleTTL)
+	router.Handle("PERSIST", app.handlePersist)
+
 	// String Commands
 	router.Handle("SET", app.handleSet)
 	router.Handle("GET", app.handleGet)

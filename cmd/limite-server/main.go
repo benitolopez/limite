@@ -30,10 +30,15 @@
 // Background Maintenance
 // ======================
 //
-// A single background goroutine handles two responsibilities:
+// A single background goroutine handles three responsibilities:
 //
 // Fsync Timer: Every second, we flush the AOF buffer to disk. This implements
 // the durability guarantee described above.
+//
+// Expiry Timer: Every 100ms, we run the active expiration algorithm to clean up
+// keys that have expired but haven't been accessed (and thus not lazily deleted).
+// This uses a Redis-style adaptive sampling approach: sample 20 keys per shard,
+// delete expired ones, and repeat if >10% were expired.
 //
 // Auto-Rewrite Trigger: We monitor the journal file size and trigger compaction
 // when it exceeds a threshold. The policy is configurable via command-line flags:
@@ -162,66 +167,78 @@ func main() {
 	// Background Maintenance Loop
 	//
 	// This goroutine is the heartbeat of the persistence system. It runs
-	// continuously and handles two critical tasks: flushing data to disk
-	// and triggering compaction when the journal grows too large.
+	// continuously and handles three critical tasks: flushing data to disk,
+	// cleaning up expired keys, and triggering compaction when the journal
+	// grows too large.
 	go func() {
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
+		fsyncTicker := time.NewTicker(1 * time.Second)
+		expiryTicker := time.NewTicker(100 * time.Millisecond)
+		defer fsyncTicker.Stop()
+		defer expiryTicker.Stop()
 
-		for range ticker.C {
-			// Durability: Force buffered writes to the physical disk.
-			// This is what backs our "at most 1 second of data loss" guarantee.
-			// The Fsync call is relatively cheap (no data copying, just a syscall)
-			// but it does block until the disk confirms the write.
-			if err := aof.Fsync(); err != nil {
-				logger.Error("background sync failed", "error", err)
-			}
+		for {
+			select {
+			case <-expiryTicker.C:
+				// Active Expiration: Clean up expired keys that haven't been accessed.
+				// This uses Redis-style adaptive sampling to balance cleanup
+				// thoroughness against CPU usage.
+				app.store.DeleteExpiredKeys()
 
-			// Compaction Check: Should we rewrite the AOF?
-			// We use Stat() to get the current file size. On modern filesystems,
-			// this is essentially free (cached in the inode).
-			stat, err := aof.file.Stat()
-			if err != nil {
-				continue
-			}
+			case <-fsyncTicker.C:
+				// Durability: Force buffered writes to the physical disk.
+				// This is what backs our "at most 1 second of data loss" guarantee.
+				// The Fsync call is relatively cheap (no data copying, just a syscall)
+				// but it does block until the disk confirms the write.
+				if err := aof.Fsync(); err != nil {
+					logger.Error("background sync failed", "error", err)
+				}
 
-			currentSize := stat.Size()
-			baseSize := app.aofBaseSize.Load()
+				// Compaction Check: Should we rewrite the AOF?
+				// We use Stat() to get the current file size. On modern filesystems,
+				// this is essentially free (cached in the inode).
+				stat, err := aof.file.Stat()
+				if err != nil {
+					continue
+				}
 
-			// Guard: Don't rewrite tiny files. Even if the percentage threshold
-			// is technically exceeded (e.g., 1KB -> 2KB is 100% growth), the
-			// overhead of compaction isn't worth it for small datasets.
-			if currentSize < cfg.aofMinSize {
-				continue
-			}
+				currentSize := stat.Size()
+				baseSize := app.aofBaseSize.Load()
 
-			// Growth Policy: Trigger when file size exceeds base + (base * percent / 100).
-			// With 100% growth, we rewrite when the file doubles. This balances
-			// disk usage against compaction frequency.
-			growthTarget := baseSize + (baseSize * int64(cfg.aofRewritePercent) / 100)
+				// Guard: Don't rewrite tiny files. Even if the percentage threshold
+				// is technically exceeded (e.g., 1KB -> 2KB is 100% growth), the
+				// overhead of compaction isn't worth it for small datasets.
+				if currentSize < cfg.aofMinSize {
+					continue
+				}
 
-			if currentSize > growthTarget {
-				// Rewrite Lock: Only one compaction can run at a time.
-				// CompareAndSwap returns true only if we successfully flipped
-				// false -> true, meaning no other compaction is running.
-				if app.isRewriting.CompareAndSwap(false, true) {
-					logger.Info("auto-rewrite triggered",
-						"current_bytes", currentSize,
-						"base_bytes", baseSize,
-						"threshold_percent", cfg.aofRewritePercent)
+				// Growth Policy: Trigger when file size exceeds base + (base * percent / 100).
+				// With 100% growth, we rewrite when the file doubles. This balances
+				// disk usage against compaction frequency.
+				growthTarget := baseSize + (baseSize * int64(cfg.aofRewritePercent) / 100)
 
-					// Run compaction in a separate goroutine so we don't block
-					// the maintenance loop (and miss fsync ticks).
-					go func() {
-						defer app.isRewriting.Store(false)
+				if currentSize > growthTarget {
+					// Rewrite Lock: Only one compaction can run at a time.
+					// CompareAndSwap returns true only if we successfully flipped
+					// false -> true, meaning no other compaction is running.
+					if app.isRewriting.CompareAndSwap(false, true) {
+						logger.Info("auto-rewrite triggered",
+							"current_bytes", currentSize,
+							"base_bytes", baseSize,
+							"threshold_percent", cfg.aofRewritePercent)
 
-						start := time.Now()
-						if err := app.CompactAOF(); err != nil {
-							logger.Error("auto-rewrite failed", "error", err)
-						} else {
-							logger.Info("auto-rewrite completed", "duration", time.Since(start))
-						}
-					}()
+						// Run compaction in a separate goroutine so we don't block
+						// the maintenance loop (and miss fsync ticks).
+						go func() {
+							defer app.isRewriting.Store(false)
+
+							start := time.Now()
+							if err := app.CompactAOF(); err != nil {
+								logger.Error("auto-rewrite failed", "error", err)
+							} else {
+								logger.Info("auto-rewrite completed", "duration", time.Since(start))
+							}
+						}()
+					}
 				}
 			}
 		}

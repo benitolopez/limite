@@ -168,6 +168,171 @@ OK
 
 ---
 
+### TTL commands
+
+Keys can be set to expire automatically after a specified time. Limite uses millisecond precision, making it suitable for high-resolution use cases like rate limiting and sliding windows.
+
+Expiration works through two mechanisms: lazy expiration (expired keys are removed when accessed) and active expiration (a background process samples random keys every 100ms and removes expired ones). This hybrid approach ensures expired keys don't linger indefinitely while keeping memory overhead minimal.
+
+**EXPIRE**
+
+    EXPIRE key milliseconds
+
+Sets a timeout on `key`. After the specified number of milliseconds, the key will be automatically deleted. Returns `1` if the timeout was set, `0` if the key does not exist.
+
+If the timeout is zero or negative, the key is deleted immediately.
+
+Example:
+```
+127.0.0.1:6479> SET session:abc "user:1001"
+OK
+127.0.0.1:6479> EXPIRE session:abc 30000
+(integer) 1
+127.0.0.1:6479> TTL session:abc
+(integer) 29994
+```
+
+**EXPIREAT**
+
+    EXPIREAT key unix-time-milliseconds
+
+Sets an absolute expiration time as a Unix timestamp in milliseconds. This is useful when you know the exact moment a key should expire, rather than a relative duration.
+
+Returns `1` if the timeout was set, `0` if the key does not exist. If the timestamp is in the past, the key is deleted immediately.
+
+Example:
+```
+127.0.0.1:6479> SET token:xyz "secret"
+OK
+127.0.0.1:6479> EXPIREAT token:xyz 1735689600000
+(integer) 1
+```
+
+**EXPIRENX**
+
+    EXPIRENX key milliseconds
+
+Sets a timeout only if the key has NO existing expiration. Returns `1` if the timeout was set, `0` if the key does not exist or already has an expiration.
+
+This is useful for setting a default expiration without overriding an existing one.
+
+Example:
+```
+127.0.0.1:6479> SET mykey "hello"
+OK
+127.0.0.1:6479> EXPIRENX mykey 60000
+(integer) 1
+127.0.0.1:6479> EXPIRENX mykey 30000
+(integer) 0
+127.0.0.1:6479> TTL mykey
+(integer) 59985
+```
+
+**EXPIREXX**
+
+    EXPIREXX key milliseconds
+
+Sets a timeout only if the key already HAS an expiration. Returns `1` if the timeout was set, `0` if the key does not exist or has no expiration.
+
+This is useful for updating an existing expiration without accidentally adding one to a persistent key.
+
+Example:
+```
+127.0.0.1:6479> SET mykey "hello"
+OK
+127.0.0.1:6479> EXPIREXX mykey 60000
+(integer) 0
+127.0.0.1:6479> EXPIRE mykey 30000
+(integer) 1
+127.0.0.1:6479> EXPIREXX mykey 60000
+(integer) 1
+```
+
+**EXPIREATNX**
+
+    EXPIREATNX key unix-time-milliseconds
+
+Sets an absolute expiration time only if the key has NO existing expiration. Returns `1` if the timeout was set, `0` if the key does not exist or already has an expiration.
+
+If the timestamp is in the past and the condition passes, the key is deleted immediately.
+
+Example:
+```
+127.0.0.1:6479> SET token:abc "secret"
+OK
+127.0.0.1:6479> EXPIREATNX token:abc 1735689600000
+(integer) 1
+127.0.0.1:6479> EXPIREATNX token:abc 1735700000000
+(integer) 0
+```
+
+**EXPIREATXX**
+
+    EXPIREATXX key unix-time-milliseconds
+
+Sets an absolute expiration time only if the key already HAS an expiration. Returns `1` if the timeout was set, `0` if the key does not exist or has no expiration.
+
+This is useful for extending or shortening an existing expiration to a specific point in time.
+
+Example:
+```
+127.0.0.1:6479> SET token:xyz "secret"
+OK
+127.0.0.1:6479> EXPIREATXX token:xyz 1735689600000
+(integer) 0
+127.0.0.1:6479> EXPIREAT token:xyz 1735689600000
+(integer) 1
+127.0.0.1:6479> EXPIREATXX token:xyz 1735700000000
+(integer) 1
+```
+
+**TTL**
+
+    TTL key
+
+Returns the remaining time to live of a key, in milliseconds.
+
+Return values:
+- `-2` if the key does not exist
+- `-1` if the key exists but has no associated expiration
+- Remaining milliseconds otherwise
+
+Example:
+```
+127.0.0.1:6479> SET mykey "hello"
+OK
+127.0.0.1:6479> TTL mykey
+(integer) -1
+127.0.0.1:6479> EXPIRE mykey 10000
+(integer) 1
+127.0.0.1:6479> TTL mykey
+(integer) 9991
+127.0.0.1:6479> TTL nonexistent
+(integer) -2
+```
+
+**PERSIST**
+
+    PERSIST key
+
+Removes the expiration from a key, making it persist indefinitely. Returns `1` if the timeout was removed, `0` if the key does not exist or has no associated timeout.
+
+Example:
+```
+127.0.0.1:6479> SET temp "data"
+OK
+127.0.0.1:6479> EXPIRE temp 60000
+(integer) 1
+127.0.0.1:6479> PERSIST temp
+(integer) 1
+127.0.0.1:6479> TTL temp
+(integer) -1
+```
+
+Note: `SET` clears any existing expiration. However, `INCR`/`DECR` preserve the TTL—only commands that replace the value entirely clear expiration.
+
+---
+
 ### String commands
 
 Basic key-value operations for storing auxiliary data.
