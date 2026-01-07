@@ -12,7 +12,11 @@ func (app *application) commands() *Router {
 
 	// TTL Commands
 	router.Handle("EXPIRE", app.handleExpire)
+	router.Handle("EXPIRENX", app.handleExpireNX)
+	router.Handle("EXPIREXX", app.handleExpireXX)
 	router.Handle("EXPIREAT", app.handleExpireAt)
+	router.Handle("EXPIREATNX", app.handleExpireAtNX)
+	router.Handle("EXPIREATXX", app.handleExpireAtXX)
 	router.Handle("TTL", app.handleTTL)
 	router.Handle("PERSIST", app.handlePersist)
 

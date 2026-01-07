@@ -109,6 +109,19 @@ const (
 	OpCodeEOF       = 0xFF
 )
 
+// ExpiryMode controls conditional expiry behavior for SetExpiry.
+//
+// NX and XX modes enable atomic "set if not exists" / "set if exists" semantics
+// for expirations. The condition is checked inside SetExpiry under the shard lock,
+// preventing TOCTOU races that would occur if callers checked Exists() separately.
+type ExpiryMode int
+
+const (
+	ExpireModeAlways ExpiryMode = iota // Always set expiry (default)
+	ExpireModeNX                       // Set only if key has NO expiry
+	ExpireModeXX                       // Set only if key HAS expiry
+)
+
 // Shard represents a single slice of the data store.
 // It has its own lock, meaning locking this shard does NOT block others.
 type Shard struct {
@@ -270,23 +283,35 @@ func (s *Store) Mutate(key string, fn func([]byte) ([]byte, bool)) {
 	}
 }
 
-// SetExpiry sets the expiration time for a key.
-// Returns false if the key does not exist.
-// Pass 0 to remove expiration (like PERSIST).
-func (s *Store) SetExpiry(key string, timestampMs int64) bool {
+// SetExpiry sets the expiration time for a key with optional NX/XX conditions.
+// Returns false if the key doesn't exist or the NX/XX condition fails.
+// Pass timestampMs <= 0 to remove expiration (PERSIST behavior).
+func (s *Store) SetExpiry(key string, timestampMs int64, mode ExpiryMode) bool {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
-	// Check if key exists (and clean up if expired)
 	shard.deleteIfExpired(key, time.Now().UnixMilli())
 
 	if _, exists := shard.data[key]; !exists {
 		return false
 	}
 
+	// NX/XX condition check must happen under lock to prevent races.
+	_, hasExpiry := shard.expires[key]
+	switch mode {
+	case ExpireModeNX:
+		if hasExpiry {
+			return false
+		}
+	case ExpireModeXX:
+		if !hasExpiry {
+			return false
+		}
+	}
+
 	if timestampMs <= 0 {
-		delete(shard.expires, key) // Remove expiry (PERSIST)
+		delete(shard.expires, key)
 	} else {
 		shard.expires[key] = timestampMs
 	}

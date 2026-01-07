@@ -208,6 +208,84 @@ OK
 (integer) 1
 ```
 
+**EXPIRENX**
+
+    EXPIRENX key milliseconds
+
+Sets a timeout only if the key has NO existing expiration. Returns `1` if the timeout was set, `0` if the key does not exist or already has an expiration.
+
+This is useful for setting a default expiration without overriding an existing one.
+
+Example:
+```
+127.0.0.1:6479> SET mykey "hello"
+OK
+127.0.0.1:6479> EXPIRENX mykey 60000
+(integer) 1
+127.0.0.1:6479> EXPIRENX mykey 30000
+(integer) 0
+127.0.0.1:6479> TTL mykey
+(integer) 59985
+```
+
+**EXPIREXX**
+
+    EXPIREXX key milliseconds
+
+Sets a timeout only if the key already HAS an expiration. Returns `1` if the timeout was set, `0` if the key does not exist or has no expiration.
+
+This is useful for updating an existing expiration without accidentally adding one to a persistent key.
+
+Example:
+```
+127.0.0.1:6479> SET mykey "hello"
+OK
+127.0.0.1:6479> EXPIREXX mykey 60000
+(integer) 0
+127.0.0.1:6479> EXPIRE mykey 30000
+(integer) 1
+127.0.0.1:6479> EXPIREXX mykey 60000
+(integer) 1
+```
+
+**EXPIREATNX**
+
+    EXPIREATNX key unix-time-milliseconds
+
+Sets an absolute expiration time only if the key has NO existing expiration. Returns `1` if the timeout was set, `0` if the key does not exist or already has an expiration.
+
+If the timestamp is in the past and the condition passes, the key is deleted immediately.
+
+Example:
+```
+127.0.0.1:6479> SET token:abc "secret"
+OK
+127.0.0.1:6479> EXPIREATNX token:abc 1735689600000
+(integer) 1
+127.0.0.1:6479> EXPIREATNX token:abc 1735700000000
+(integer) 0
+```
+
+**EXPIREATXX**
+
+    EXPIREATXX key unix-time-milliseconds
+
+Sets an absolute expiration time only if the key already HAS an expiration. Returns `1` if the timeout was set, `0` if the key does not exist or has no expiration.
+
+This is useful for extending or shortening an existing expiration to a specific point in time.
+
+Example:
+```
+127.0.0.1:6479> SET token:xyz "secret"
+OK
+127.0.0.1:6479> EXPIREATXX token:xyz 1735689600000
+(integer) 0
+127.0.0.1:6479> EXPIREAT token:xyz 1735689600000
+(integer) 1
+127.0.0.1:6479> EXPIREATXX token:xyz 1735700000000
+(integer) 1
+```
+
 **TTL**
 
     TTL key

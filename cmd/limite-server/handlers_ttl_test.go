@@ -410,7 +410,7 @@ func TestDeleteExpiredKeys(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		key := "key" + strconv.Itoa(i)
 		store.Set(key, []byte("value"))
-		store.SetExpiry(key, past)
+		store.SetExpiry(key, past, ExpireModeAlways)
 	}
 
 	// Run cleanup
@@ -439,14 +439,14 @@ func TestSnapshotWithExpiry(t *testing.T) {
 
 	// Key with future expiry
 	store.Set("future", []byte("DATAvalue1"))
-	store.SetExpiry("future", futureExpiry)
+	store.SetExpiry("future", futureExpiry, ExpireModeAlways)
 
 	// Key with no expiry
 	store.Set("noexpiry", []byte("DATAvalue2"))
 
 	// Key with past expiry (should be skipped on load)
 	store.Set("past", []byte("DATAvalue3"))
-	store.SetExpiry("past", pastExpiry)
+	store.SetExpiry("past", pastExpiry, ExpireModeAlways)
 
 	// Save snapshot
 	var buf bytes.Buffer
@@ -490,4 +490,213 @@ func TestSnapshotWithExpiry(t *testing.T) {
 // bufioReader is a helper to create a bufio.Reader for testing
 func bufioReader(r *bytes.Reader) *bufio.Reader {
 	return bufio.NewReader(r)
+}
+
+// =============================================================================
+// EXPIRENX / EXPIREXX Tests
+// =============================================================================
+
+// TestExpireNX_NoExpiry tests EXPIRENX on a key without existing expiry.
+func TestExpireNX_NoExpiry(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a key without expiry
+	app.handleSet(&buf, []string{"mykey", "hello"})
+	buf.Reset()
+
+	// EXPIRENX should succeed (key has no expiry)
+	app.handleExpireNX(&buf, []string{"mykey", "5000"})
+	if buf.String() != ":1\r\n" {
+		t.Errorf("EXPIRENX on key without expiry: got %q, want %q", buf.String(), ":1\r\n")
+	}
+
+	// Verify TTL is set
+	buf.Reset()
+	app.handleTTL(&buf, []string{"mykey"})
+	resp := buf.String()
+	if resp == ":-1\r\n" {
+		t.Error("Key should have TTL after EXPIRENX")
+	}
+}
+
+// TestExpireNX_HasExpiry tests EXPIRENX on a key with existing expiry.
+func TestExpireNX_HasExpiry(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a key with expiry
+	app.handleSet(&buf, []string{"mykey", "hello"})
+	buf.Reset()
+	app.handleExpire(&buf, []string{"mykey", "10000"})
+	buf.Reset()
+
+	// EXPIRENX should fail (key already has expiry)
+	app.handleExpireNX(&buf, []string{"mykey", "5000"})
+	if buf.String() != ":0\r\n" {
+		t.Errorf("EXPIRENX on key with expiry: got %q, want %q", buf.String(), ":0\r\n")
+	}
+
+	// Verify original TTL is preserved (~10000ms)
+	buf.Reset()
+	app.handleTTL(&buf, []string{"mykey"})
+	resp := buf.String()
+	if len(resp) >= 3 && resp[0] == ':' {
+		ttl, _ := strconv.ParseInt(resp[1:len(resp)-2], 10, 64)
+		if ttl < 9800 || ttl > 10100 {
+			t.Errorf("TTL should be ~10000 (unchanged), got %d", ttl)
+		}
+	}
+}
+
+// TestExpireXX_HasExpiry tests EXPIREXX on a key with existing expiry.
+func TestExpireXX_HasExpiry(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a key with expiry
+	app.handleSet(&buf, []string{"mykey", "hello"})
+	buf.Reset()
+	app.handleExpire(&buf, []string{"mykey", "10000"})
+	buf.Reset()
+
+	// EXPIREXX should succeed (key has expiry)
+	app.handleExpireXX(&buf, []string{"mykey", "5000"})
+	if buf.String() != ":1\r\n" {
+		t.Errorf("EXPIREXX on key with expiry: got %q, want %q", buf.String(), ":1\r\n")
+	}
+
+	// Verify TTL was updated (~5000ms)
+	buf.Reset()
+	app.handleTTL(&buf, []string{"mykey"})
+	resp := buf.String()
+	if len(resp) >= 3 && resp[0] == ':' {
+		ttl, _ := strconv.ParseInt(resp[1:len(resp)-2], 10, 64)
+		if ttl < 4800 || ttl > 5100 {
+			t.Errorf("TTL should be ~5000, got %d", ttl)
+		}
+	}
+}
+
+// TestExpireXX_NoExpiry tests EXPIREXX on a key without existing expiry.
+func TestExpireXX_NoExpiry(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a key without expiry
+	app.handleSet(&buf, []string{"mykey", "hello"})
+	buf.Reset()
+
+	// EXPIREXX should fail (key has no expiry)
+	app.handleExpireXX(&buf, []string{"mykey", "5000"})
+	if buf.String() != ":0\r\n" {
+		t.Errorf("EXPIREXX on key without expiry: got %q, want %q", buf.String(), ":0\r\n")
+	}
+
+	// Verify key still has no expiry
+	buf.Reset()
+	app.handleTTL(&buf, []string{"mykey"})
+	if buf.String() != ":-1\r\n" {
+		t.Errorf("Key should still have no expiry, got %q", buf.String())
+	}
+}
+
+// TestExpireNX_NonExistent tests EXPIRENX on a non-existent key.
+func TestExpireNX_NonExistent(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// EXPIRENX on non-existent key should return 0
+	app.handleExpireNX(&buf, []string{"nonexistent", "5000"})
+	if buf.String() != ":0\r\n" {
+		t.Errorf("EXPIRENX on non-existent key: got %q, want %q", buf.String(), ":0\r\n")
+	}
+}
+
+// TestExpireAtNX tests EXPIREATNX command.
+func TestExpireAtNX(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a key without expiry
+	app.handleSet(&buf, []string{"mykey", "hello"})
+	buf.Reset()
+
+	// EXPIREATNX should succeed
+	futureMs := time.Now().UnixMilli() + 5000
+	app.handleExpireAtNX(&buf, []string{"mykey", strconv.FormatInt(futureMs, 10)})
+	if buf.String() != ":1\r\n" {
+		t.Errorf("EXPIREATNX: got %q, want %q", buf.String(), ":1\r\n")
+	}
+}
+
+// TestExpireAtXX tests EXPIREATXX command.
+func TestExpireAtXX(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a key with expiry
+	app.handleSet(&buf, []string{"mykey", "hello"})
+	buf.Reset()
+	app.handleExpire(&buf, []string{"mykey", "10000"})
+	buf.Reset()
+
+	// EXPIREATXX should succeed
+	futureMs := time.Now().UnixMilli() + 5000
+	app.handleExpireAtXX(&buf, []string{"mykey", strconv.FormatInt(futureMs, 10)})
+	if buf.String() != ":1\r\n" {
+		t.Errorf("EXPIREATXX: got %q, want %q", buf.String(), ":1\r\n")
+	}
+}
+
+// TestExpireNX_NegativeTTL_ConditionFails tests EXPIRENX with negative TTL
+// when the key already has an expiry (NX condition fails).
+func TestExpireNX_NegativeTTL_ConditionFails(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a key with expiry
+	app.handleSet(&buf, []string{"mykey", "hello"})
+	buf.Reset()
+	app.handleExpire(&buf, []string{"mykey", "10000"})
+	buf.Reset()
+
+	// EXPIRENX with negative TTL should fail (key has expiry)
+	app.handleExpireNX(&buf, []string{"mykey", "-1"})
+	if buf.String() != ":0\r\n" {
+		t.Errorf("EXPIRENX -1 on key with expiry: got %q, want %q", buf.String(), ":0\r\n")
+	}
+
+	// Key should NOT be deleted (NX condition was not met)
+	buf.Reset()
+	app.handleGet(&buf, []string{"mykey"})
+	if buf.String() == "$-1\r\n" {
+		t.Error("Key should NOT be deleted when NX condition fails")
+	}
+}
+
+// TestExpireXX_NegativeTTL_ConditionPasses tests EXPIREXX with negative TTL
+// when the key has an expiry (XX condition passes, key deleted).
+func TestExpireXX_NegativeTTL_ConditionPasses(t *testing.T) {
+	app := newTestApp(t)
+	var buf bytes.Buffer
+
+	// Set a key with expiry
+	app.handleSet(&buf, []string{"mykey", "hello"})
+	buf.Reset()
+	app.handleExpire(&buf, []string{"mykey", "10000"})
+	buf.Reset()
+
+	// EXPIREXX with negative TTL should succeed (key has expiry) and delete key
+	app.handleExpireXX(&buf, []string{"mykey", "-1"})
+	if buf.String() != ":1\r\n" {
+		t.Errorf("EXPIREXX -1 on key with expiry: got %q, want %q", buf.String(), ":1\r\n")
+	}
+
+	// Key should be deleted
+	buf.Reset()
+	app.handleGet(&buf, []string{"mykey"})
+	if buf.String() != "$-1\r\n" {
+		t.Errorf("Key should be deleted after EXPIREXX -1: got %q", buf.String())
+	}
 }
