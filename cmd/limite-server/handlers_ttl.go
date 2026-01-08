@@ -135,7 +135,7 @@ func (app *application) expireGeneric(w io.Writer, args []string, isAbsolute boo
 	key := args[0]
 	val, err := strconv.ParseInt(args[1], 10, 64)
 	if err != nil {
-		app.writeErrorResponse(w, "ERR value is not an integer or out of range")
+		_ = app.writeErrorResponse(w, "ERR value is not an integer or out of range")
 		return
 	}
 
@@ -147,7 +147,7 @@ func (app *application) expireGeneric(w io.Writer, args []string, isAbsolute boo
 	} else {
 		// Overflow guard: int64 addition can wrap around silently.
 		if val > 0 && val > math.MaxInt64-now {
-			app.writeErrorResponse(w, "ERR invalid expire time")
+			_ = app.writeErrorResponse(w, "ERR invalid expire time")
 			return
 		}
 		absolute = now + val
