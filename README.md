@@ -3,6 +3,13 @@ Limite - Probabilistic Data Structures Server
 
 Limite is a standalone server, written in Go, that provides probabilistic data structures as a network service. Think of it as Redis, but specialized for approximate algorithms that trade perfect accuracy for dramatic memory savings. It runs as a single binary, accepting commands over a raw TCP connection using the Redis RESP protocol.
 
+**Pre-release**
+
+This project is still evolving and the API is not yet stable.
+Until `v1.0.0`, breaking changes may occur between releases.
+
+Feedback is welcome!
+
 What are probabilistic data structures?
 ---
 
