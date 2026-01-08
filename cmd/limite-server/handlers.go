@@ -56,6 +56,7 @@ func (app *application) handleInfo(w io.Writer, args []string) {
 	var infoBuilder strings.Builder
 
 	infoBuilder.WriteString("# Server\r\n")
+	infoBuilder.WriteString(fmt.Sprintf("version:%s\r\n", version))
 	infoBuilder.WriteString(fmt.Sprintf("connections_total:%d\r\n", totalConns))
 	infoBuilder.WriteString(fmt.Sprintf("connections_active:%d\r\n", activeConns))
 	infoBuilder.WriteString(fmt.Sprintf("commands_processed_total:%d\r\n", totalCmds))
