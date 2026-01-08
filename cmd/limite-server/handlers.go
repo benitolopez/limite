@@ -95,6 +95,12 @@ func (app *application) handleCompact(w io.Writer, args []string) {
 		return
 	}
 
+	// Cannot compact when running in memory-only mode.
+	if app.aof == nil {
+		_ = app.writeErrorResponse(w, "ERR persistence is disabled, nothing to compact")
+		return
+	}
+
 	// Attempt to acquire the rewrite lock.
 	// If CompareAndSwap returns false, a rewrite (auto or manual) is already running.
 	if !app.isRewriting.CompareAndSwap(false, true) {

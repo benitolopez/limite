@@ -823,3 +823,45 @@ func TestAOFCompaction(t *testing.T) {
 		t.Error("Recovered data mismatch")
 	}
 }
+
+// TestPersistenceDisabled verifies that when persistence is disabled (aof is nil),
+// all persistence operations are safely skipped without errors.
+func TestPersistenceDisabled(t *testing.T) {
+	// Create app without AOF (simulates -persistence=false)
+	app := newTestApp(t)
+	// app.aof is nil by default from newTestApp
+
+	// logCommand should be a no-op when aof is nil
+	app.logCommand("SET", []string{"key1", "value1"})
+	app.logCommand("HLL.ADD", []string{"hllkey", "elem1"})
+
+	// CompactAOF should return nil immediately when aof is nil
+	if err := app.CompactAOF(); err != nil {
+		t.Errorf("CompactAOF with nil aof should return nil, got: %v", err)
+	}
+
+	// Verify in-memory operations still work
+	app.store.Set("testkey", []byte("DATAtestvalue"))
+	val, found := app.store.Get("testkey")
+	if !found {
+		t.Fatal("Store operations should work without persistence")
+	}
+	if string(val) != "DATAtestvalue" {
+		t.Errorf("Store value mismatch: got %q, want %q", string(val), "DATAtestvalue")
+	}
+}
+
+// TestCompactCommandPersistenceDisabled verifies that the COMPACT command
+// returns an appropriate error when persistence is disabled.
+func TestCompactCommandPersistenceDisabled(t *testing.T) {
+	app := newTestApp(t)
+	// app.aof is nil by default
+
+	var buf bytes.Buffer
+	app.handleCompact(&buf, []string{})
+
+	response := buf.String()
+	if !bytes.Contains(buf.Bytes(), []byte("persistence is disabled")) {
+		t.Errorf("COMPACT should return error about persistence being disabled, got: %q", response)
+	}
+}

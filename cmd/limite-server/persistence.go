@@ -174,7 +174,12 @@ func (app *application) loadAOF() error {
 // CompactAOF rewrites the journal file by replacing the accumulated command
 // history with a fresh binary snapshot. This dramatically reduces file size
 // and speeds up future startups.
+//
+// Returns nil immediately if persistence is disabled (app.aof is nil).
 func (app *application) CompactAOF() error {
+	if app.aof == nil {
+		return nil
+	}
 	//
 	// DESIGN
 	// ------

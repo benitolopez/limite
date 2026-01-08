@@ -104,6 +104,9 @@ Command line options
 -bf-error-rate float64
     Bloom Filter target false positive rate (default 0.01)
 
+-persistence bool
+    Enable AOF persistence (default true). Set to false for in-memory only mode.
+
 -aof string
     Append-only file path (default "journal.aof")
 
@@ -675,6 +678,8 @@ Limite uses a hybrid persistence model combining a binary snapshot with an appen
 **Manual compaction**: Use the `COMPACT` command to trigger compaction immediately. This is useful after bulk deletes.
 
 **Graceful shutdown**: On SIGINT/SIGTERM, Limite compacts the AOF before exiting, ensuring the fastest possible startup next time.
+
+**Disabling persistence**: Run with `-persistence=false` for a pure in-memory mode. No AOF file is created or loaded, all data is lost on restart. This is useful for ephemeral caches, testing, or when durability is handled at another layer.
 
 Concurrency
 ---
