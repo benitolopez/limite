@@ -62,6 +62,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -71,6 +72,10 @@ import (
 
 	"limite.lopezb.com/internal/limite/hyperloglog"
 )
+
+// version is set at build time via ldflags:
+// go build -ldflags "-X main.version=1.0.0" ./cmd/limite-server
+var version = "dev"
 
 type config struct {
 	port               int
@@ -106,6 +111,8 @@ type application struct {
 func main() {
 	var cfg config
 
+	showVersion := flag.Bool("version", false, "Print version and exit")
+
 	flag.IntVar(&cfg.port, "port", 6479, "TCP server port")
 	flag.IntVar(&cfg.maxConnections, "max-conn", 100, "Maximum concurrent connections")
 	flag.DurationVar(&cfg.shutdownTimeout, "shutdown-timeout", 5*time.Second, "Graceful shutdown timeout")
@@ -119,6 +126,11 @@ func main() {
 	flag.IntVar(&cfg.aofRewritePercent, "aof-rewrite-percent", 100, "Percentage growth to trigger AOF rewrite")
 	flag.BoolVar(&cfg.aofLoadTruncated, "aof-load-truncated", true, "Auto-recover from truncated AOF (set false for strict mode)")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
