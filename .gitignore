@@ -4,6 +4,7 @@
 *.aof
 *.limite
 output.txt
+bin/
 
 ### Go ###
 *.exe
