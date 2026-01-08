@@ -80,6 +80,7 @@ type config struct {
 	hllSparseThreshold int
 	bfInitialCapacity  uint64
 	bfErrorRate        float64
+	persistence        bool
 	aofFilename        string
 	aofMinSize         int64
 	aofRewritePercent  int
@@ -112,6 +113,7 @@ func main() {
 	flag.IntVar(&cfg.hllSparseThreshold, "hll-sparse-threshold", hyperloglog.DefaultSparseThreshold, "HyperLogLog sparse-to-dense threshold")
 	flag.Uint64Var(&cfg.bfInitialCapacity, "bf-capacity", 1000, "Bloom Filter initial capacity for new filters")
 	flag.Float64Var(&cfg.bfErrorRate, "bf-error-rate", 0.01, "Bloom Filter target false positive rate (e.g., 0.01 for 1%)")
+	flag.BoolVar(&cfg.persistence, "persistence", true, "Enable AOF persistence (set false for in-memory only mode)")
 	flag.StringVar(&cfg.aofFilename, "aof", "journal.aof", "Append Only File path")
 	flag.Int64Var(&cfg.aofMinSize, "aof-min-size", 64*1024*1024, "Min size (bytes) to trigger AOF rewrite")
 	flag.IntVar(&cfg.aofRewritePercent, "aof-rewrite-percent", 100, "Percentage growth to trigger AOF rewrite")
@@ -130,38 +132,44 @@ func main() {
 
 	app.router = app.commands()
 
-	// This replays any commands that happened after the snapshot (or all if no snapshot).
-	if err := app.loadAOF(); err != nil {
-		logger.Error("failed to load AOF", "error", err)
-		os.Exit(1) // Fatal: AOF corruption implies data loss risk
-	}
-
-	// Open AOF for writing)
-	aof, err := NewAOF(cfg.aofFilename)
-	if err != nil {
-		logger.Error("failed to open AOF", "error", err)
-		os.Exit(1)
-	}
-	app.aof = aof
-
-	// Initialize base size on startup so we calculate growth correctly.
-	if stat, err := aof.file.Stat(); err == nil {
-		app.aofBaseSize.Store(stat.Size())
-	} else {
-		app.aofBaseSize.Store(0)
-	}
-
-	// If loadAOF detected truncation, trigger immediate compaction to heal the file.
-	// This writes a clean binary snapshot, replacing the corrupted tail.
-	if app.needsCompaction {
-		logger.Info("AOF was truncated on load, triggering immediate compaction to heal the file...")
-		if err := app.CompactAOF(); err != nil {
-			logger.Error("failed to compact AOF after truncation recovery", "error", err)
-			// Non-fatal: the server can still run, but the file won't be healed until
-			// the next automatic or manual compaction.
-		} else {
-			logger.Info("AOF healed successfully")
+	// Persistence setup: load existing data and open AOF for writing.
+	// When persistence is disabled, the server runs in memory-only mode.
+	if cfg.persistence {
+		// This replays any commands that happened after the snapshot (or all if no snapshot).
+		if err := app.loadAOF(); err != nil {
+			logger.Error("failed to load AOF", "error", err)
+			os.Exit(1) // Fatal: AOF corruption implies data loss risk
 		}
+
+		// Open AOF for writing
+		aof, err := NewAOF(cfg.aofFilename)
+		if err != nil {
+			logger.Error("failed to open AOF", "error", err)
+			os.Exit(1)
+		}
+		app.aof = aof
+
+		// Initialize base size on startup so we calculate growth correctly.
+		if stat, err := aof.file.Stat(); err == nil {
+			app.aofBaseSize.Store(stat.Size())
+		} else {
+			app.aofBaseSize.Store(0)
+		}
+
+		// If loadAOF detected truncation, trigger immediate compaction to heal the file.
+		// This writes a clean binary snapshot, replacing the corrupted tail.
+		if app.needsCompaction {
+			logger.Info("AOF was truncated on load, triggering immediate compaction to heal the file...")
+			if err := app.CompactAOF(); err != nil {
+				logger.Error("failed to compact AOF after truncation recovery", "error", err)
+				// Non-fatal: the server can still run, but the file won't be healed until
+				// the next automatic or manual compaction.
+			} else {
+				logger.Info("AOF healed successfully")
+			}
+		}
+	} else {
+		logger.Info("persistence disabled, running in memory-only mode")
 	}
 
 	// Background Maintenance Loop
@@ -185,18 +193,23 @@ func main() {
 				app.store.DeleteExpiredKeys()
 
 			case <-fsyncTicker.C:
+				// Skip persistence operations when running in memory-only mode.
+				if app.aof == nil {
+					continue
+				}
+
 				// Durability: Force buffered writes to the physical disk.
 				// This is what backs our "at most 1 second of data loss" guarantee.
 				// The Fsync call is relatively cheap (no data copying, just a syscall)
 				// but it does block until the disk confirms the write.
-				if err := aof.Fsync(); err != nil {
+				if err := app.aof.Fsync(); err != nil {
 					logger.Error("background sync failed", "error", err)
 				}
 
 				// Compaction Check: Should we rewrite the AOF?
 				// We use Stat() to get the current file size. On modern filesystems,
 				// this is essentially free (cached in the inode).
-				stat, err := aof.file.Stat()
+				stat, err := app.aof.file.Stat()
 				if err != nil {
 					continue
 				}
@@ -250,6 +263,10 @@ func main() {
 	// perform a final compaction. This ensures the journal is as small as
 	// possible for the next startup, minimizing AOF replay time.
 	defer func() {
+		if app.aof == nil {
+			logger.Info("shutting down...")
+			return
+		}
 		logger.Info("shutting down, compacting AOF...")
 		if err := app.CompactAOF(); err != nil {
 			// This is best-effort. The journal is still valid if compaction
@@ -257,11 +274,10 @@ func main() {
 			// with the close.
 			logger.Error("failed to compact AOF on exit", "error", err)
 		}
-		_ = aof.Close()
+		_ = app.aof.Close()
 	}()
 
-	err = app.serve()
-	if err != nil {
+	if err := app.serve(); err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
