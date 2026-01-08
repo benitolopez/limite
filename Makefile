@@ -33,12 +33,15 @@ run/limite-check:
 build/limite-server:
 	@echo 'Building cmd/limite-server...'
 	go build -ldflags='-s -X main.version=$(VERSION)' -o=./bin/limite-server ./cmd/limite-server
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s -X main.version=$(VERSION)' -o=./bin/linux_amd64/limite-server ./cmd/limite-server
 
 ## build/limite-check: build the cmd/limite-check application
 .PHONY: build/limite-check
 build/limite-check:
 	@echo 'Building cmd/limite-check...'
 	go build -ldflags='-s' -o=./bin/limite-check ./cmd/limite-check
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s' -o=./bin/linux_amd64/limite-check ./cmd/limite-check
+
 
 # ==================================================================================== #
 # QUALITY CONTROL
