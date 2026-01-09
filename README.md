@@ -90,6 +90,9 @@ Command line options
 ---
 
 ```
+-version
+    Print version and exit
+
 -port int
     TCP server port (default 6479)
 
