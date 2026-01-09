@@ -70,8 +70,19 @@ Building and running
 ```
 $ git clone https://github.com/benitolopez/limite.git
 $ cd limite
-$ go build -o limite-server ./cmd/limite-server
-$ ./limite-server
+$ make build/limite-server
+$ ./bin/limite-server
+```
+
+This builds both a native binary and a Linux/amd64 binary (in `./bin/linux_amd64/`). The version is automatically set from git tags.
+
+Other useful make targets:
+
+```
+make help                # Show all available targets
+make run/limite-server   # Run without building
+make audit               # Run linters and tests
+make tidy                # Format code and tidy dependencies
 ```
 
 The server starts on port 6479 by default. You can now connect with redis-cli:
@@ -709,8 +720,8 @@ Diagnostic tool
 Limite includes `limite-check`, a utility for inspecting and validating journal files:
 
 ```
-$ go build -o limite-check ./cmd/limite-check
-$ ./limite-check -file journal.aof
+$ make build/limite-check
+$ ./bin/limite-check -file journal.aof
 ```
 
 The tool validates the binary snapshot structure, verifies the CRC64 checksum, and reports any corruption. With `-v`, it shows per-shard statistics. With `-dump`, it displays the contents of each key.
